@@ -1,0 +1,63 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>t-record / Android 录音卡片</title>
+  <style>
+    body { font-family: system-ui, sans-serif; max-width: 560px; margin: 28px auto; padding: 16px; }
+    button { padding: 12px 16px; margin: 4px; border: 1px solid #888; border-radius: 9px; }
+    button:disabled { opacity: .4; }
+    #status { padding: 12px; background: #eee; color: #111; border-radius: 8px; min-height: 20px; }
+    #file { font-family: monospace; white-space: pre-wrap; overflow-wrap: anywhere; }
+  </style>
+</head>
+<body>
+  <h2>Android 录音小程序</h2>
+  <p>点击开始后，Android 会弹出录音确认和麦克风权限提示。录音保存于应用私有文件夹。</p>
+  <button id="start">开始录音</button>
+  <button id="stop" disabled>停止并保存</button>
+  <button id="play" disabled>播放刚才的录音</button>
+  <button id="stopPlay" disabled>停止播放</button>
+  <p id="status" role="status">等待操作</p>
+  <p id="file"></p>
+  <script>
+    (() => {
+      'use strict';
+      const $ = id => document.getElementById(id);
+      let lastId = null;
+      const exists = typeof RikkaRecorder !== 'undefined';
+      if (!exists) $('status').textContent = 'Android Bridge 未注册：请在 RikkaHub 的 BrowserActivity 中打开此本地 HTML。';
+      $('start').disabled = !exists;
+      function status(text) { $('status').textContent = text; }
+      $('start').onclick = () => { status('等待 Android 录音确认…'); RikkaRecorder.start(); };
+      $('stop').onclick = () => RikkaRecorder.stop();
+      $('play').onclick = () => { if (lastId) RikkaRecorder.play(lastId); };
+      $('stopPlay').onclick = () => RikkaRecorder.stopPlayback();
+      window.addEventListener('rikka-recorder', event => {
+        const d = event.detail;
+        switch (d.type) {
+          case 'recording_started':
+            status('录音进行中（Android 麦克风）');
+            $('start').disabled = true; $('stop').disabled = false;
+            $('play').disabled = true; $('stopPlay').disabled = true; break;
+          case 'recording_saved':
+            lastId = d.id;
+            $('start').disabled = false; $('stop').disabled = true;
+            $('play').disabled = false;
+            $('file').textContent = '文件：' + d.fileName + '\n位置：' + d.absolutePath + '\n大小：' + d.bytes + ' bytes';
+            status('录音保存成功；可以播放'); break;
+          case 'playing':
+            $('stopPlay').disabled = false; status('正在播放保存的录音'); break;
+          case 'playback_finished':
+          case 'playback_stopped':
+            $('stopPlay').disabled = true; status('播放结束'); break;
+          case 'error':
+            $('start').disabled = false; $('stop').disabled = true;
+            status('错误：' + d.code); break;
+        }
+      });
+    })();
+  </script>
+</body>
+</html>

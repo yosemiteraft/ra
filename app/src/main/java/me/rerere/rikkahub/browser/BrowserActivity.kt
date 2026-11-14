@@ -1,6 +1,8 @@
 package me.rerere.rikkahub.browser
 
+import android.Manifest
 import android.content.Intent
+import androidx.activity.result.contract.ActivityResultContracts
 import android.os.Bundle
 import android.webkit.CookieManager
 import android.webkit.WebView
@@ -35,6 +37,31 @@ import java.io.File
 class BrowserActivity : ComponentActivity() {
 
     private var webView: WebView? = null
+    private var recorderBridge: BrowserRecorderBridge? = null
+    private var pendingRecordPermission: ((Boolean) -> Unit)? = null
+    private val recordPermissionLauncher = registerForActivityResult(
+        ActivityResultContracts.RequestPermission()
+    ) { granted ->
+        val pending = pendingRecordPermission
+        pendingRecordPermission = null
+        pending?.invoke(granted)
+    }
+
+    /**
+     * Do not replace an unresolved ActivityResult callback: navigation can cancel the
+     * old page while Android's permission dialog is still open.
+     */
+    internal fun requestRecorderPermission(callback: (Boolean) -> Unit): Boolean {
+        if (pendingRecordPermission != null) return false
+        pendingRecordPermission = callback
+        return runCatching {
+            recordPermissionLauncher.launch(Manifest.permission.RECORD_AUDIO)
+            true
+        }.getOrElse {
+            pendingRecordPermission = null
+            false
+        }
+    }
     private val canGoBack = mutableStateOf(false)
     private val canGoForward = mutableStateOf(false)
     private val currentUrl = mutableStateOf("about:blank")
@@ -83,10 +110,19 @@ class BrowserActivity : ComponentActivity() {
                         // The Activity itself owns the WebView; stash it for back-press
                         // handling and bind into the global controller for tool dispatch.
                         webView = wv
-                        BrowserController.bind(wv)
+                        recorderBridge = BrowserRecorderBridge(this@BrowserActivity, wv).also {
+                            wv.addJavascriptInterface(it, "RikkaRecorder")
+                        }
+                        // Bridge registration must happen before the initial loadUrl.
+                        // Binding the controller happens AFTER loadUrl to preserve the
+                        // browser_open awaitBind/awaitReadyState ordering.
                         // Third-party cookies must be enabled per-WebView, not on the
                         // CookieManager singleton — the API split is a holdover from Lollipop.
                         CookieManager.getInstance().setAcceptThirdPartyCookies(wv, true)
+                    },
+                    onInitialLoadStarted = { wv -> BrowserController.bind(wv) },
+                    onTopLevelPageLoadStarted = { url ->
+                        recorderBridge?.onTopLevelPageLoadStarted(url)
                     },
                     onUrlChange = { currentUrl.value = it },
                     onTitleChange = { currentTitle.value = it },
@@ -113,13 +149,22 @@ class BrowserActivity : ComponentActivity() {
         }
     }
 
+    override fun onStop() {
+        recorderBridge?.onBackground()
+        super.onStop()
+    }
+
     override fun onDestroy() {
+        recorderBridge?.release()
+        recorderBridge = null
+        pendingRecordPermission = null
         // Tear down the WebView the Activity created — not doing so leaks the entire view
         // hierarchy plus a JS engine on every Activity finish. Order matters: clear from the
         // controller first so an in-flight tool dispatch can fail-fast on browser_not_open
         // rather than racing the destroy.
         webView?.let { wv ->
             BrowserController.unbind(wv)
+            wv.removeJavascriptInterface("RikkaRecorder")
             wv.stopLoading()
             wv.loadUrl("about:blank")
             (wv.parent as? android.view.ViewGroup)?.removeView(wv)

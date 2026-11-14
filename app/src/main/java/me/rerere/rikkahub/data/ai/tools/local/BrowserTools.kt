@@ -28,6 +28,8 @@ import me.rerere.rikkahub.browser.BrowserController
 import me.rerere.rikkahub.browser.BrowserControllerHandle
 import me.rerere.rikkahub.browser.BrowserDiffHelper
 import me.rerere.rikkahub.browser.BrowserToolDefaults
+import me.rerere.rikkahub.browser.BrowserFileSchemePolicy
+import me.rerere.rikkahub.data.files.FileFolders
 import me.rerere.rikkahub.browser.HeadlessBrowserSessionPool
 import me.rerere.rikkahub.browser.ReadabilityRunner.runReadability
 import me.rerere.rikkahub.browser.awaitReadyState
@@ -166,13 +168,21 @@ private suspend fun trackJsonAction(
 
 fun browserOpenTool(context: Context, invocationContext: ToolInvocationContext? = null): Tool = Tool(
     name = BrowserToolDefaults.OPEN,
-    description = "Navigate the in-app browser to a URL. Launches the browser if it isn't open. Returns {success, current_url, title}. Resets the per-task 5-minute timer.$TELEGRAM_HEADLESS_CUE",
+    description = "Navigate the in-app browser to a URL. Launches the browser if it isn't open. " +
+        "Returns {success, current_url, title}. Resets the per-task 5-minute timer. " +
+        "For a generated local recorder card under app files/webview/*.html, " +
+        "visible BrowserActivity exposes JavaScript RikkaRecorder.start(), stop(), " +
+        "play(recordingId), stopPlayback(). Listen for window 'rikka-recorder' CustomEvent " +
+        "detail {type, id?, fileName?, absolutePath?, bytes?, code?}. " +
+        "Recording requires native user confirmation and RECORD_AUDIO permission. " +
+        "Use this Android bridge, not web getUserMedia; it is unavailable in headless " +
+        "sessions and to remote websites. " + TELEGRAM_HEADLESS_CUE,
     parameters = {
         InputSchema.Obj(
             properties = buildJsonObject {
                 put("url", buildJsonObject {
                     put("type", "string")
-                    put("description", "The full URL to navigate to (https://...)")
+                    put("description", "URL to navigate to: https://... or file:///... (local files must be staged in app files/webview, cache/skill-webview, or web assets in files/skills/<skill>)")
                 })
             },
             required = listOf("url"),
@@ -185,20 +195,25 @@ fun browserOpenTool(context: Context, invocationContext: ToolInvocationContext? 
         // API key, or credit-card-shaped digit run, attach a warning so the LLM treats
         // the destination with care. Best-effort, not a security boundary.
         val exfilHits = SensitiveContentDetector.scanUrlQuery(url)
-        // Scheme allow-list IS a security boundary: the browser WebViews run with
-        // allowFileAccess on (skill webview cards open file:// pages there), so a
-        // model-driven file:// navigation followed by browser_get_text would read
-        // app-private files (datastore, DB, known_hosts) into the conversation —
-        // including via prompt injection from a browsed page. file://, content://,
-        // javascript:, intent: etc. are therefore rejected at the tool boundary.
-        // Scheme-less input is passed through unchanged (pre-existing behaviour).
+        // Explicitly accept local HTML, but never grant the model unrestricted access
+        // to app-private databases, preferences, secrets or unrelated files.
+        // Scheme-less input keeps the pre-existing browser behaviour.
         val scheme = url?.let { android.net.Uri.parse(it.trim()).scheme?.lowercase() }
         val rawOut = if (url == null) {
             missingArgEnvelope("url", "url is required and must be a non-empty string")
-        } else if (scheme != null && scheme !in setOf("http", "https", "about")) {
+        } else if (scheme != null && scheme !in setOf("http", "https", "about", "file")) {
             buildJsonObject {
                 put("error", "scheme_not_allowed")
-                put("detail", "browser_open only accepts http(s) and about: URLs; got scheme '$scheme'")
+                put("detail", "browser_open accepts http(s), about: and approved file:// URLs; got scheme '$scheme'")
+            }
+        } else if (scheme == "file" && !BrowserFileSchemePolicy.isAllowed(
+                url,
+                listOf(File(context.filesDir, "webview"), File(context.cacheDir, "skill-webview")),
+                skillAssetRoot = File(context.filesDir, FileFolders.SKILLS),
+            )) {
+            buildJsonObject {
+                put("error", "file_access_denied")
+                put("detail", "file:// must reference a local staged webview file or permitted web asset inside files/skills/<skill>")
             }
         } else {
             withTimeoutOrNull(toolTimeoutMs) {

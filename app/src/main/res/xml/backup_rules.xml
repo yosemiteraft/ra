@@ -31,6 +31,8 @@
   <exclude
     domain="file"
     path="browser-profile/" />
+  <!-- t-record: private microphone recordings must never be cloud-backed up. -->
+  <exclude domain="file" path="recordings/" />
   <!-- Phase 22A: on-device LLM weights. Can be 1 GB+; never back up to cloud. -->
   <exclude
     domain="file"

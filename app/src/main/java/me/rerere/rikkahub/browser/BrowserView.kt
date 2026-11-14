@@ -45,6 +45,8 @@ import kotlin.uuid.Uuid
 @Composable
 fun BrowserView(
     onWebViewReady: (WebView) -> Unit,
+    onInitialLoadStarted: (WebView) -> Unit,
+    onTopLevelPageLoadStarted: (String) -> Unit,
     onUrlChange: (String) -> Unit,
     onTitleChange: (String) -> Unit,
     onLoadProgress: (Int) -> Unit,
@@ -101,6 +103,8 @@ fun BrowserView(
                         .weight(1f),
                     initialUrl = initialUrl,
                     onWebViewReady = onWebViewReady,
+                    onInitialLoadStarted = onInitialLoadStarted,
+                    onTopLevelPageLoadStarted = onTopLevelPageLoadStarted,
                     onUrlChange = onUrlChange,
                     onTitleChange = onTitleChange,
                     onLoadProgress = onLoadProgress,
@@ -126,6 +130,8 @@ private fun WebViewHost(
     modifier: Modifier = Modifier,
     initialUrl: String,
     onWebViewReady: (WebView) -> Unit,
+    onInitialLoadStarted: (WebView) -> Unit,
+    onTopLevelPageLoadStarted: (String) -> Unit,
     onUrlChange: (String) -> Unit,
     onTitleChange: (String) -> Unit,
     onLoadProgress: (Int) -> Unit,
@@ -178,13 +184,23 @@ private fun WebViewHost(
                     // callback, so opening a skill card stays unaffected. Without this,
                     // a browsed page (or eval'd JS) could steer the WebView into
                     // app-private files and exfiltrate them via browser_get_text.
-                    val toFile = request?.url?.scheme.equals("file", ignoreCase = true)
-                    return toFile && view?.url?.startsWith("file:", ignoreCase = true) != true
+                    val destination = request?.url?.toString() ?: return false
+                    if (!destination.startsWith("file:", ignoreCase = true)) return false
+                    val ctx = view?.context ?: return true
+                    return BrowserFileSchemePolicy.blockPageFileNavigation(
+                        currentUrl = view.url,
+                        destinationUrl = destination,
+                        roots = listOf(File(ctx.filesDir, "webview"), File(ctx.cacheDir, "skill-webview")),
+                        skillAssetRoot = File(ctx.filesDir, me.rerere.rikkahub.data.files.FileFolders.SKILLS),
+                    )
                 }
 
                 override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
                     super.onPageStarted(view, url, favicon)
-                    if (url != null) onUrlChange(url)
+                    if (url != null) {
+                        onTopLevelPageLoadStarted(url)
+                        onUrlChange(url)
+                    }
                 }
                 override fun onPageFinished(view: WebView?, url: String?) {
                     super.onPageFinished(view, url)
@@ -252,8 +268,10 @@ private fun WebViewHost(
                 }
             }
 
-            loadUrl(initialUrl)
+            // Register the native JS interface BEFORE the initial page load.
             onWebViewReady(this)
+            loadUrl(initialUrl)
+            onInitialLoadStarted(this)
         }
     }
 

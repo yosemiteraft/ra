@@ -236,6 +236,10 @@
   <string name="chat_message_tool_approve">Approve</string>
   <string name="chat_message_tool_ask_questions">Ask %d questions</string>
   <string name="chat_message_tool_call_generic">Called tool %1$s</string>
+  <string name="chat_message_tool_browser_open_title">Opened page</string>
+  <string name="chat_message_tool_browser_open_card_open">Open in browser</string>
+  <string name="chat_message_tool_browser_open_card_untitled">Untitled page</string>
+  <string name="chat_message_tool_browser_open_card_caption">Tap to reopen in the in-app browser</string>
   <string name="chat_message_tool_call_label">Called tool %1$s</string>
   <string name="chat_message_tool_call_result">Call result</string>
   <string name="chat_message_tool_call_title">Tool Call</string>
